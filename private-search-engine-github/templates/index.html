@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <title>Private Search</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1020; --panel:#121a2c; --line:#28344c; --text:#edf2ff; --muted:#a7b3ca; --accent:#8da8ff; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:radial-gradient(ellipse at top,#182544 0,var(--bg) 55%); color:var(--text); font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif; }
+    main { width:min(850px,92vw); margin:0 auto; padding:10vh 0 60px; }
+    .brand { text-align:center; margin-bottom:30px; }
+    .mark { display:inline-grid; place-items:center; width:58px; height:58px; border:1px solid #40547b; border-radius:18px; background:#172442; font-size:27px; margin-bottom:12px; }
+    h1 { margin:0; font-size:clamp(2rem,6vw,3.4rem); letter-spacing:-.04em; }
+    .subtitle { color:var(--muted); margin:8px 0 0; }
+    form { display:flex; gap:10px; padding:9px; background:var(--panel); border:1px solid var(--line); border-radius:18px; box-shadow:0 18px 60px #0003; }
+    input { flex:1; min-width:0; padding:14px; color:var(--text); background:transparent; border:0; outline:none; font:inherit; }
+    button { padding:12px 19px; border:0; border-radius:12px; background:var(--accent); color:#10182b; font:inherit; font-weight:700; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:wait; }
+    .hint { color:var(--muted); text-align:center; font-size:.9rem; margin:12px 0 34px; }
+    #status { white-space:pre-wrap; color:#ffd79b; margin:18px 0; }
+    section { margin-top:22px; }
+    h2 { font-size:1.1rem; margin:0 0 12px; }
+    .answer, .result { background:#111a2bdb; border:1px solid var(--line); border-radius:16px; padding:18px; }
+    .answer { white-space:pre-wrap; }
+    .result { margin:10px 0; }
+    .result a { color:#b9c9ff; font-weight:650; overflow-wrap:anywhere; }
+    .result p { margin:8px 0; color:#c2ccde; }
+    .meta { font-size:.82rem; color:var(--muted); }
+    .hidden { display:none; }
+    footer { color:#7f8ba4; text-align:center; font-size:.82rem; margin-top:40px; }
+    @media(max-width:560px) { main { padding-top:7vh; } form { flex-direction:column; } button { width:100%; } }
+  </style>
+</head>
+<body>
+<main>
+  <header class="brand">
+    <div class="mark" aria-hidden="true">⌕</div>
+    <h1>Private Search</h1>
+    <p class="subtitle">Search the web. Get a concise answer. Explore the sources.</p>
+  </header>
+  <form id="search-form">
+    <input id="query" name="query" maxlength="300" placeholder="Ask a question or search the web…" autocomplete="off" required>
+    <button id="submit" type="submit">Search</button>
+  </form>
+  <p class="hint">Powered by your local SearXNG instance · AI answers are optional</p>
+  <div id="status" role="status" aria-live="polite"></div>
+  <section id="answer-section" class="hidden">
+    <h2>AI answer</h2>
+    <div id="answer" class="answer"></div>
+  </section>
+  <section id="sources-section" class="hidden">
+    <h2>Web sources</h2>
+    <div id="sources"></div>
+  </section>
+  <footer>This interface runs locally. Search queries go to your configured SearXNG instance, which contacts the engines configured in its settings.</footer>
+</main>
+<script>
+const form = document.getElementById("search-form");
+const input = document.getElementById("query");
+const button = document.getElementById("submit");
+const statusBox = document.getElementById("status");
+const answerSection = document.getElementById("answer-section");
+const answerBox = document.getElementById("answer");
+const sourcesSection = document.getElementById("sources-section");
+const sourcesBox = document.getElementById("sources");
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = input.value.trim();
+  if (!query) { statusBox.textContent = "Type something to search."; return; }
+  button.disabled = true;
+  button.textContent = "Searching…";
+  statusBox.textContent = "Searching the web. This can take a few seconds.";
+  answerSection.classList.add("hidden");
+  sourcesSection.classList.add("hidden");
+  answerBox.textContent = "";
+  sourcesBox.replaceChildren();
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 100000);
+    let response;
+    try {
+      response = await fetch("/api/search", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({query}),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `Search failed (${response.status}).`);
+    if (data.answer) {
+      answerBox.textContent = data.answer;
+      answerSection.classList.remove("hidden");
+    }
+    statusBox.textContent = data.ai_notice || "";
+    for (const source of (data.sources || [])) {
+      const card = document.createElement("article");
+      card.className = "result";
+      const link = document.createElement("a");
+      link.href = source.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = source.title || source.url;
+      const description = document.createElement("p");
+      description.textContent = source.content || "No summary available.";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = source.engine || "Web result";
+      card.append(link, description, meta);
+      sourcesBox.append(card);
+    }
+    if ((data.sources || []).length) sourcesSection.classList.remove("hidden");
+    if (!data.sources || !data.sources.length) {
+      statusBox.textContent += (statusBox.textContent ? "\n" : "") + "No web results found. Try another query.";
+    }
+  } catch (error) {
+    statusBox.textContent = error.name === "AbortError"
+      ? "The search request timed out. Check the Flask terminal and try again."
+      : (error.message || "Something went wrong. Check the terminal for details.");
+  } finally {
+    button.disabled = false;
+    button.textContent = "Search";
+  }
+});
+</script>
+</body>
+</html>
